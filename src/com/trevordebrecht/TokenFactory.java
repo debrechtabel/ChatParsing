@@ -112,6 +112,9 @@ public class TokenFactory {
 
 	private static class EmoticonToken extends Token {
 		private static final String TAG = "emoticons";
+
+		// hipchat seems to use only alpha characters for emoticons, here I'm using alphanumeric
+		// (all ascii not reasonable, considering number of garbage ascii characters)
 		private static final String REGEX = "(?<" + TAG + ">\\(\\w{1,15}\\))";
 
 		private String mEmoticon;
