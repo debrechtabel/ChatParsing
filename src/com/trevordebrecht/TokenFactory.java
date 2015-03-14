@@ -1,14 +1,18 @@
 package com.trevordebrecht;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.SocketTimeoutException;
 import java.net.URL;
+import java.net.URLConnection;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.swing.text.BadLocationException;
 import javax.swing.text.Document;
 import javax.swing.text.html.HTMLEditorKit;
 
@@ -16,6 +20,8 @@ public class TokenFactory {
 
 	private static Map<String, Class<? extends Token>> tokenRegistry;
 	private static Map<String, Class<? extends Command>> commandRegistry;
+
+	private static boolean DEBUG = false;
 
 	static {
 		tokenRegistry = new HashMap<String, Class<? extends Token>>(1);
@@ -27,6 +33,7 @@ public class TokenFactory {
 		commandRegistry.put(HelpCommand.REGEX, HelpCommand.class);
 		commandRegistry.put(QuitCommand.REGEX, QuitCommand.class);
 		commandRegistry.put(SetUsernameCommand.REGEX, SetUsernameCommand.class);
+		commandRegistry.put(DebugCommand.REGEX, DebugCommand.class);
 	}
 
 	public static abstract class Token {
@@ -53,25 +60,24 @@ public class TokenFactory {
 					// yes!
 					if (token != null) {
 
-						Token t = null;
+						Token t;
 						try {
 							t = entry.getValue().newInstance();
 							t.init(token);
 						}
 						catch (Exception e) {
-							e.printStackTrace();
+							// if token was invalid or an issue happened, don't save it
+							if (DEBUG) e.printStackTrace();
+							break;
 						}
 
-						// if token was invalid or an issue happened, don't save it
-						if (t != null) {
-							List<Token> tokenList = tokenMap.get(tag);
-							if (tokenList == null) {
-								tokenList = new ArrayList<Token>(1);
-								tokenMap.put(tag, tokenList);
-							}
-
-							tokenList.add(t);
+						List<Token> tokenList = tokenMap.get(tag);
+						if (tokenList == null) {
+							tokenList = new ArrayList<Token>(1);
+							tokenMap.put(tag, tokenList);
 						}
+
+						tokenList.add(t);
 
 						break;
 					}
@@ -128,6 +134,9 @@ public class TokenFactory {
 		private static final String TAG = "links";
 		private static final String REGEX = "(?<" + TAG + ">(https?|ftp):\\/\\/[^\\s/$.?#].[^\\s]*)";
 
+		private static final int CONNECTION_TIMEOUT = 10 * 1000; // 10 seconds
+		private static final int READ_TIMEOUT = 10 * 1000; // 10 seconds
+
 		private String mTitle;
 		private String mUrl;
 
@@ -135,9 +144,14 @@ public class TokenFactory {
 
 		@Override
 		protected void init(String in) throws InvalidTokenException {
+			mUrl = in;
+
 			try {
 				URL url = new URL(in);
-				BufferedReader reader = new BufferedReader(new InputStreamReader(url.openStream()));
+				URLConnection urlConnection = url.openConnection();
+				urlConnection.setConnectTimeout(CONNECTION_TIMEOUT);
+				urlConnection.setReadTimeout(READ_TIMEOUT);
+				BufferedReader reader = new BufferedReader(new InputStreamReader(urlConnection.getInputStream()));
 
 				HTMLEditorKit kit = new HTMLEditorKit();
 				Document document = kit.createDefaultDocument();
@@ -145,9 +159,13 @@ public class TokenFactory {
 				kit.read(reader, document, 0);
 
 				mTitle = (String)document.getProperty(Document.TitleProperty);
-				mUrl = in;
 			}
-			catch (Exception e) {
+			catch (SocketTimeoutException | BadLocationException e) {
+				// connection timed out OR html doc was malformed
+				// set title to empty string, but keep token itself
+				mTitle = "";
+			}
+			catch (IOException e) {
 				throw new InvalidTokenException(e);
 			}
 		}
@@ -180,7 +198,7 @@ public class TokenFactory {
 						return cmd;
 					}
 					catch (Exception e) {
-						e.printStackTrace();
+						if (DEBUG) e.printStackTrace();
 					}
 				}
 			}
@@ -260,6 +278,27 @@ public class TokenFactory {
 		@Override
 		public String getMessage() {
 			return mSuccess ? "Username successfully changed\n" : "Username change failed. For help, enter /help\n";
+		}
+
+		@Override
+		public boolean shouldQuit() {
+			return false;
+		}
+	}
+
+	private static class DebugCommand extends Command {
+		private static final String REGEX = "^/debug\\s*$";
+
+		public DebugCommand() {}
+
+		@Override
+		protected void init(String in) {
+			DEBUG = !DEBUG;
+		}
+
+		@Override
+		public String getMessage() {
+			return "Debug " + (DEBUG ? "enabled\n" : "disabled\n");
 		}
 
 		@Override
